@@ -1,0 +1,125 @@
+name: Build macOS native updater
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - installer.c
+      - test_installer.py
+      - .github/workflows/build.yml
+      - .gitattributes
+  pull_request:
+    paths:
+      - installer.c
+      - test_installer.py
+      - .github/workflows/build.yml
+      - .gitattributes
+
+permissions:
+  contents: read
+
+jobs:
+  build-universal2:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile both slices, combine and ad-hoc sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+            -arch x86_64 -mmacosx-version-min=10.13 installer.c \
+            -o dist/updater-x86_64 -framework CoreServices -framework CoreFoundation
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+            -arch arm64 -mmacosx-version-min=11.0 installer.c \
+            -o dist/updater-arm64 -framework CoreServices -framework CoreFoundation
+          lipo -create dist/updater-x86_64 dist/updater-arm64 \
+            -output dist/package/HostUtilities.Installer
+          chmod 755 dist/package/HostUtilities.Installer
+          codesign --force --sign - dist/package/HostUtilities.Installer
+          codesign --verify --all-architectures --strict --verbose=2 dist/package/HostUtilities.Installer
+          lipo -verify_arch x86_64 arm64 dist/package/HostUtilities.Installer
+          test "$(lipo -archs dist/package/HostUtilities.Installer | tr ' ' '\n' | sort | tr '\n' ' ')" = "arm64 x86_64 "
+          file dist/package/HostUtilities.Installer
+          otool -l dist/package/HostUtilities.Installer > dist/load-commands.txt
+      - name: Run real helper regression on runner native architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 test_installer.py --binary dist/package/HostUtilities.Installer --workspace dist/tests
+      - name: Record provenance and package executable with its mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import subprocess
+
+          def output(*args):
+              return subprocess.check_output(args, text=True).strip()
+
+          package = Path("dist/package")
+          binary = package / "HostUtilities.Installer"
+          info = {
+              "sourceRepository": os.environ["GITHUB_REPOSITORY"],
+              "sourceSHA": output("git", "rev-parse", "HEAD"),
+              "installerSourceSHA256": hashlib.sha256(Path("installer.c").read_bytes()).hexdigest(),
+              "protocol": "OC2MAC1",
+              "compiler": output("clang", "--version"),
+              "sdkVersion": output("xcrun", "--show-sdk-version"),
+              "minimumMacOS": {"x86_64": "10.13", "arm64": "11.0"},
+              "architectures": sorted(output("lipo", "-archs", str(binary)).split()),
+              "executedTestArchitecture": platform.machine(),
+              "runnerOSVersion": platform.mac_ver()[0],
+              "signing": "ad-hoc (codesign -s -); not notarized",
+              "binarySHA256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+              "builtAtUTC": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "actionsRun": os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"]
+                            + "/actions/runs/" + os.environ["GITHUB_RUN_ID"],
+          }
+          (package / "build-info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+          PY
+          # tar preserves 0755; artifact ZIP alone is not an executable-mode contract.
+          COPYFILE_DISABLE=1 tar -czf dist/HostUtilities-macOS-universal2.tar.gz \
+            -C dist/package HostUtilities.Installer build-info.json
+          cp dist/package/build-info.json dist/build-info.json
+          (
+            cd dist
+            shasum -a 256 HostUtilities-macOS-universal2.tar.gz build-info.json > SHA256SUMS
+          )
+          mkdir -p dist/unpack-check
+          tar -xzf dist/HostUtilities-macOS-universal2.tar.gz -C dist/unpack-check
+          test -x dist/unpack-check/HostUtilities.Installer
+          cmp dist/package/HostUtilities.Installer dist/unpack-check/HostUtilities.Installer
+          codesign --verify --all-architectures --strict --verbose=2 dist/unpack-check/HostUtilities.Installer
+          lipo -verify_arch x86_64 arm64 dist/unpack-check/HostUtilities.Installer
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+      - name: Upload tested universal2 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HostUtilities-macOS-universal2
+          path: |
+            dist/HostUtilities-macOS-universal2.tar.gz
+            dist/SHA256SUMS
+            dist/build-info.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain regression evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HostUtilities-macOS-test-evidence
+          path: |
+            dist/tests/
+            dist/load-commands.txt
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

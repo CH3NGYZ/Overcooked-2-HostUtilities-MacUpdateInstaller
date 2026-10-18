@@ -41,7 +41,7 @@ jobs:
           chmod 755 dist/package/HostUtilities.Installer
           codesign --force --sign - dist/package/HostUtilities.Installer
           codesign --verify --all-architectures --strict --verbose=2 dist/package/HostUtilities.Installer
-          lipo -verify_arch x86_64 arm64 dist/package/HostUtilities.Installer
+          lipo dist/package/HostUtilities.Installer -verify_arch x86_64 arm64
           test "$(lipo -archs dist/package/HostUtilities.Installer | tr ' ' '\n' | sort | tr '\n' ' ')" = "arm64 x86_64 "
           file dist/package/HostUtilities.Installer
           otool -l dist/package/HostUtilities.Installer > dist/load-commands.txt
@@ -100,7 +100,7 @@ jobs:
           test -x dist/unpack-check/HostUtilities.Installer
           cmp dist/package/HostUtilities.Installer dist/unpack-check/HostUtilities.Installer
           codesign --verify --all-architectures --strict --verbose=2 dist/unpack-check/HostUtilities.Installer
-          lipo -verify_arch x86_64 arm64 dist/unpack-check/HostUtilities.Installer
+          lipo dist/unpack-check/HostUtilities.Installer -verify_arch x86_64 arm64
           (cd dist && shasum -a 256 -c SHA256SUMS)
       - name: Upload tested universal2 package
         uses: actions/upload-artifact@v4

@@ -14,7 +14,7 @@
    mkdir helper-unpacked
    tar -xzf HostUtilities-macOS-universal2.tar.gz -C helper-unpacked
    codesign --verify --strict --verbose=2 helper-unpacked/HostUtilities.Installer
-   lipo -verify_arch x86_64 arm64 helper-unpacked/HostUtilities.Installer
+   lipo helper-unpacked/HostUtilities.Installer -verify_arch x86_64 arm64
    ~~~
 
 5. 把**解出的 HostUtilities.Installer 二进制**放到 MOD 主仓库的 **native/UpdateInstaller/macos/HostUtilities.Installer**，然后重新编译主仓库 MOD，使其嵌入新 helper。主仓库构建使用本地已提供的二进制，不会联网构建或下载这个 helper。经 macOS 复制时保留 0755 执行权限；主仓库运行时仍需按现有流程设置提取文件的执行权限。
@@ -37,7 +37,7 @@ python3 test_installer.py --binary helper-unpacked/HostUtilities.Installer --wor
 
 回归覆盖普通替换及元数据/备份、owner 存活期间不改文件、有效 owner 下重放拒绝、授权前后取消、授权后的文件改写拒绝、目标符号链接和后置父目录链接拒绝、第二个安装目标冲突后的真实回滚、元字符与 Unicode（含非 BMP 字符）路径，以及普通 .DS_Store 更新后保留、含该元数据的旧目录保留、同名链接拒绝和 Windows 协议魔数拒绝。回滚断言要求新文件转移到 failed-new 恢复副本、旧文件恢复原字节及元数据，不能仅凭失败退出码判定回滚通过。
 
-每个查询、握手和退出都有超时，超时记为失败。所有夹具、install.plan、握手标记、apply.log、query-*.log、unittest.log、results.jsonl、summary.json 及恢复副本都保留在会话目录，不自动删除历史证据。测试目录被 Git 忽略。Actions 即使失败也尝试上传 **HostUtilities-macOS-test-evidence**；证据 artifact 包含测试专用隐藏文件，避免丢失 .DS_Store 夹具。正式 artifact 使用 tar 保存执行权限，不依赖 artifact ZIP 恢复权限。
+每个查询、握手和退出都有超时，超时记为失败。所有夹具、install.plan、握手标记、apply.log、query-*.log、unittest.log、results.jsonl、summary.json 及恢复副本都保留在会话目录，不自动删除历史证据。测试目录被 Git 忽略。Actions 即使失败也尝试将已有的 dist/tests 和 dist/load-commands.txt 打包为 **HostUtilities-macOS-test-evidence.tar.gz**，再上传到 **HostUtilities-macOS-test-evidence** artifact；tar 保留测试中的特殊字符文件名、隐藏文件（含 .DS_Store 夹具）和符号链接，避免上传器的文件名限制。下载并解开 artifact ZIP 后，请在 macOS 上用 `tar -xzf HostUtilities-macOS-test-evidence.tar.gz` 提取证据；其中的双引号等文件名不兼容 Windows 文件系统。正式 artifact 使用 tar 保存执行权限，不依赖 artifact ZIP 恢复权限。
 
 ## 独立协议 OC2MAC1
 

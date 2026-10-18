@@ -112,14 +112,30 @@ jobs:
             dist/build-info.json
           if-no-files-found: error
           retention-days: 30
+      - name: Archive regression evidence even on failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import tarfile
+
+          dist = Path("dist")
+          sources = [path for path in (dist / "tests", dist / "load-commands.txt") if path.exists()]
+          if sources:
+              # Preserve special filenames, hidden fixtures and symlinks inside tar.
+              with tarfile.open(dist / "HostUtilities-macOS-test-evidence.tar.gz", "w:gz",
+                                dereference=False) as archive:
+                  for path in sources:
+                      archive.add(path, arcname=path.name)
+          PY
       - name: Retain regression evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: HostUtilities-macOS-test-evidence
-          path: |
-            dist/tests/
-            dist/load-commands.txt
-          include-hidden-files: true
+          path: dist/HostUtilities-macOS-test-evidence.tar.gz
+          compression-level: 0
           if-no-files-found: warn
           retention-days: 14
